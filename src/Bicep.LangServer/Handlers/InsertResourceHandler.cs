@@ -60,64 +60,72 @@ namespace Bicep.LanguageServer.Handlers
 
         public async Task<Unit> Handle(InsertResourceParams request, CancellationToken cancellationToken)
         {
-            var context = compilationManager.GetCompilation(request.TextDocument.Uri.ToUri());
-            if (context is null)
+            try
             {
-                return Unit.Value;
-            }
-
-            if (!ResourceId.TryParse(request.ResourceId, out var resourceId))
-            {
-                server.Window.ShowError($"Failed to parse supplied resourceId '{request.ResourceId}'");
-                return Unit.Value;
-            }
-            var fullyQualifiedType = resourceId.FormatFullyQualifiedType();
-
-            var allTypes = azResourceTypeLoader.GetAvailableTypes()
-                .ToLookup(x => x.FormatType(), StringComparer.OrdinalIgnoreCase);
-
-            var matchedType = allTypes[fullyQualifiedType]
-                .OrderByDescending(x => x.ApiVersion, ApiVersionComparer.Instance)
-                .FirstOrDefault();
-
-            if (matchedType is null)
-            {
-                server.Window.ShowError($"Failed to find Bicep types for resource of type '{fullyQualifiedType}'");
-                return Unit.Value;
-            }
-
-            var resource = await azResourceProvider.GetGenericResource(
-                context.Compilation.Configuration,
-                resourceId,
-                matchedType.ApiVersion,
-                cancellationToken);
-
-            var cursorOffset = PositionHelper.GetOffset(context.LineStarts, request.Position);
-            var binder = context.Compilation.GetEntrypointSemanticModel().Binder;
-            var node = context.ProgramSyntax.TryFindMostSpecificNodeInclusive(cursorOffset, n => binder.GetParent(n) is ProgramSyntax) ?? context.ProgramSyntax;
-            var insertOffset = node.Span.Position + node.Span.Length;
-
-            var resourceDeclaration = CreateResourceSyntax(resource, resourceId, matchedType);
-            var replacement = GenerateCodeReplacement(context.Compilation, resourceDeclaration, new TextSpan(insertOffset, 0));
-
-            await server.Workspace.ApplyWorkspaceEdit(new ApplyWorkspaceEditParams
-            {
-                Edit = new()
+                var context = compilationManager.GetCompilation(request.TextDocument.Uri.ToUri());
+                if (context is null)
                 {
-                    Changes = new Dictionary<DocumentUri, IEnumerable<TextEdit>>
+                    return Unit.Value;
+                }
+
+                if (!ResourceId.TryParse(request.ResourceId, out var resourceId))
+                {
+                    server.Window.ShowError($"Failed to parse supplied resourceId \"{request.ResourceId}\".");
+                    return Unit.Value;
+                }
+                var fullyQualifiedType = resourceId.FormatFullyQualifiedType();
+
+                var allTypes = azResourceTypeLoader.GetAvailableTypes()
+                    .ToLookup(x => x.FormatType(), StringComparer.OrdinalIgnoreCase);
+
+                var matchedType = allTypes[fullyQualifiedType]
+                    .OrderByDescending(x => x.ApiVersion, ApiVersionComparer.Instance)
+                    .FirstOrDefault();
+
+                if (matchedType is null)
+                {
+                    server.Window.ShowError($"Failed to find a Bicep type definition for resource of type \"{fullyQualifiedType}\".");
+                    return Unit.Value;
+                }
+
+                var resource = await azResourceProvider.GetGenericResource(
+                    context.Compilation.Configuration,
+                    resourceId,
+                    matchedType.ApiVersion,
+                    cancellationToken);
+
+                var cursorOffset = PositionHelper.GetOffset(context.LineStarts, request.Position);
+                var binder = context.Compilation.GetEntrypointSemanticModel().Binder;
+                var node = context.ProgramSyntax.TryFindMostSpecificNodeInclusive(cursorOffset, n => binder.GetParent(n) is ProgramSyntax) ?? context.ProgramSyntax;
+                var insertOffset = node.Span.Position + node.Span.Length;
+
+                var resourceDeclaration = CreateResourceSyntax(resource, resourceId, matchedType);
+                var replacement = GenerateCodeReplacement(context.Compilation, resourceDeclaration, new TextSpan(insertOffset, 0));
+
+                await server.Workspace.ApplyWorkspaceEdit(new ApplyWorkspaceEditParams
+                {
+                    Edit = new()
                     {
-                        [request.TextDocument.Uri] = new[] {
-                            new TextEdit
-                            {
-                                Range = replacement.ToRange(context.LineStarts),
-                                NewText = replacement.Text,
+                        Changes = new Dictionary<DocumentUri, IEnumerable<TextEdit>>
+                        {
+                            [request.TextDocument.Uri] = new[] {
+                                new TextEdit
+                                {
+                                    Range = replacement.ToRange(context.LineStarts),
+                                    NewText = replacement.Text,
+                                },
                             },
                         },
                     },
-                },
-            }, cancellationToken);
+                }, cancellationToken);
 
-            return Unit.Value;
+                return Unit.Value;
+            }
+            catch (Exception exception)
+            {
+                server.Window.ShowError($"Caught exception inserting resource: {exception.Message}.");
+                return Unit.Value;
+            }
         }
 
         private CodeReplacement GenerateCodeReplacement(Compilation prevCompilation, ResourceDeclarationSyntax resourceDeclaration, TextSpan replacementSpan)
