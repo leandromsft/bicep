@@ -3,8 +3,11 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Runtime.CompilerServices;
+using Bicep.Core.Extensions;
 using Bicep.Core.Syntax;
+using Bicep.Core.TypeSystem;
 using Bicep.Core.TypeSystem.Az;
 
 namespace Bicep.Core.Semantics.Metadata
@@ -44,8 +47,7 @@ namespace Bicep.Core.Semantics.Metadata
                 {
                     // Skip analysis for ErrorSymbol and similar cases, these are invalid cases, and won't be emitted.
                     if (!resourceSymbols.Value.TryGetValue(resourceDeclarationSyntax, out var symbol) || 
-                        symbol.TryGetResourceType() is not {} resourceType ||
-                        symbol.SafeGetBodyPropertyValue(AzResourceTypeProvider.ResourceNamePropertyName) is not {} nameSyntax)
+                        symbol.TryGetResourceType() is not {} resourceType)
                     {
                         // TODO genericize this name property check
                         break;
@@ -56,6 +58,16 @@ namespace Bicep.Core.Semantics.Metadata
                         break;
                     }
 
+                    var identifiers = ImmutableDictionary<string, SyntaxBase>.Empty;
+                    if (resourceType.Body.Type is ObjectType bodyObjectType)
+                    {
+                        identifiers = bodyObjectType.Properties.Values.Where(x => x.Flags.HasFlag(TypePropertyFlags.UniqueIdentifier))
+                            .ToImmutableDictionaryExcludingNullValues(
+                                x => x.Name,
+                                x => symbol.SafeGetBodyPropertyValue(x.Name),
+                                LanguageConstants.IdentifierComparer);
+                    }
+
                     if (semanticModel.Binder.GetNearestAncestor<ResourceDeclarationSyntax>(syntax) is {} nestedParentSyntax)
                     {
                         // nested resource parent syntax
@@ -63,7 +75,6 @@ namespace Bicep.Core.Semantics.Metadata
                         {
                             return new(
                                 resourceType,
-                                nameSyntax,
                                 symbol,
                                 new(parentMetadata,  null, true),
                                 symbol.SafeGetBodyPropertyValue(LanguageConstants.ResourceScopePropertyName),
@@ -84,7 +95,6 @@ namespace Bicep.Core.Semantics.Metadata
                         {
                             return new(
                                 resourceType,
-                                nameSyntax,
                                 symbol,
                                 new(parentMetadata, indexExpression, false),
                                 symbol.SafeGetBodyPropertyValue(LanguageConstants.ResourceScopePropertyName),
@@ -95,7 +105,6 @@ namespace Bicep.Core.Semantics.Metadata
                     {
                         return new(
                             resourceType,
-                            nameSyntax,
                             symbol,
                             null,
                             symbol.SafeGetBodyPropertyValue(LanguageConstants.ResourceScopePropertyName),

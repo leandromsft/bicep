@@ -308,8 +308,14 @@ namespace Bicep.Core.TypeSystem.Az
             {
                 if (properties.TryGetValue(propertyName, out var typeProperty))
                 {
+                    var typePropertyFlags = typeProperty.Flags;
+                    if (LanguageConstants.IdentifierComparer.Equals(propertyName, ResourceNamePropertyName))
+                    {
+                        typePropertyFlags |= TypePropertyFlags.UniqueIdentifier;
+                    }
+
                     // Update tags for standardized resource properties that are always readable at deploy-time.
-                    properties = properties.SetItem(propertyName, UpdateFlags(typeProperty, typeProperty.Flags | TypePropertyFlags.ReadableAtDeployTime));
+                    properties = properties.SetItem(propertyName, UpdateFlags(typeProperty, typePropertyFlags | TypePropertyFlags.ReadableAtDeployTime));
                 }
             }
 
